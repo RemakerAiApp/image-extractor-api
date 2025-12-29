@@ -9,13 +9,13 @@ app = Flask(__name__)
 # Basic logging for Render.com logs
 logging.basicConfig(level=logging.INFO)
 
-# Health check + Welcome page (root URL pe 404 nahi aayega)
+# Health check + Welcome page
 @app.route("/")
 def home():
     return jsonify({
         "message": "Image Extractor API is live and running! 🚀",
         "status": "healthy",
-        "version": "1.1",
+        "version": "1.2",
         "endpoints": {
             "POST /api/extract-images": "Extract image URLs from any website",
             "GET /api/image-proxy?url=...": "Proxy images (bypass hotlink protection)"
@@ -55,7 +55,6 @@ def image_proxy():
         if not content_type.startswith("image/"):
             return "", 204
 
-        # Stream large images efficiently
         response = Response(r.iter_content(chunk_size=8192), content_type=content_type)
         response.headers["Cache-Control"] = "public, max-age=86400"
         response.headers["Access-Control-Allow-Origin"] = "*"
@@ -69,7 +68,7 @@ def image_proxy():
 
 @app.route("/api/extract-images", methods=["POST", "OPTIONS"])
 def extract_images():
-    # Handle CORS preflight request
+    # Handle CORS preflight
     if request.method == "OPTIONS":
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -78,7 +77,7 @@ def extract_images():
         return resp, 200
 
     try:
-        data = request.get_json(force=True)  # force=True for better handling
+        data = request.get_json(force=True)
         if not data or "url" not in data:
             return jsonify({"success": False, "error": "Missing 'url' in JSON body"}), 400
 
@@ -103,7 +102,7 @@ def extract_images():
 
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Remove unnecessary tags to speed up parsing
+        # Clean up unnecessary tags
         for tag in soup(["script", "style", "noscript", "meta", "link"]):
             tag.decompose()
 
@@ -119,15 +118,15 @@ def extract_images():
                 tag.get("data-image")
             )
 
-            # Handle srcset - pick the first valid URL
+            # Better srcset handling: pick the largest (last) URL
             if not src and tag.get("srcset"):
-                candidates = [item.strip().split(" ")[0] for item in tag["srcset"].split(",")]
-                src = next((c for c in candidates if c), None)
+                candidates = [item.strip().split(" ")[0] for item in tag["srcset"].split(",") if item.strip()]
+                src = candidates[-1] if candidates else None
 
             if not src:
                 continue
 
-            # Convert relative to absolute
+            # Convert to absolute URL
             if src.startswith("//"):
                 src = "https:" + src
             elif src.startswith("/"):
@@ -135,16 +134,15 @@ def extract_images():
             elif not src.startswith(("http://", "https://")):
                 src = urljoin(url, src)
 
-            # Final validation
+            # Final validation: must be http/https and not data:
             if not src.startswith(("http://", "https://")) or src.startswith("data:"):
                 continue
 
-            # Strong filter: only known image extensions (more accurate, less junk)
-            lower_src = src.lower().split("?")[0].split("#")[0]
-            if lower_src.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.avif', '.ico')):
-                images.add(src)
+            # 🔥 NO EXTENSION FILTER ANYMORE 🔥
+            # All valid image URLs from <img> tags are accepted
+            images.add(src)
 
-        unique_images = sorted(list(images))  # Sort for consistent order
+        unique_images = sorted(list(images))
 
         response = jsonify({
             "success": True,
@@ -167,5 +165,4 @@ def extract_images():
 
 
 if __name__ == "__main__":
-    # Render.com pe gunicorn use hota hai, local test ke liye
     app.run(host="0.0.0.0", port=5000, debug=False)
