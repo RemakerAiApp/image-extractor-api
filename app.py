@@ -1,16 +1,15 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS   # 👈 ADD
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 app = Flask(__name__)
+CORS(app)   # 👈 VERY IMPORTANT
 
 @app.route("/")
 def home():
-    return jsonify({
-        "status": "Image Extractor API running",
-        "usage": "/api/extract-images"
-    })
+    return jsonify({"status": "API running"})
 
 @app.route("/api/extract-images", methods=["POST"])
 def extract_images():
@@ -18,26 +17,19 @@ def extract_images():
     url = data.get("url")
 
     if not url:
-        return jsonify({"error": "URL is required"}), 400
+        return jsonify({"error": "URL required"}), 400
 
-    try:
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
+    response = requests.get(url, timeout=10)
+    soup = BeautifulSoup(response.text, "html.parser")
 
-        images = []
-        for img in soup.find_all("img"):
-            src = img.get("src")
-            if src:
-                images.append(urljoin(url, src))
+    images = []
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if src:
+            images.append(urljoin(url, src))
 
-        return jsonify({
-            "success": True,
-            "total_images": len(images),
-            "images": images
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    return jsonify({
+        "success": True,
+        "total_images": len(images),
+        "images": images
+    })
