@@ -1,46 +1,21 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS   # 👈 ADD
+from flask import Response, request
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-
-app = Flask(__name__)
-CORS(app)   # 👈 VERY IMPORTANT
-
-@app.route("/")
-def home():
-    return jsonify({"status": "API running"})
-
-@app.route("/api/extract-images", methods=["POST"])
-def extract_images():
-    data = request.get_json()
-    url = data.get("url")
-
-    if not url:
-        return jsonify({"error": "URL required"}), 400
-
-    response = requests.get(url, timeout=10)
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    images = []
-    for img in soup.find_all("img"):
-        src = img.get("src")
-        if src:
-            images.append(urljoin(url, src))
-
-    return jsonify({
-        "success": True,
-        "total_images": len(images),
-        "images": images
-    })
-from flask import Response
-import requests
+import base64
 
 @app.route("/api/image-proxy")
 def image_proxy():
     img_url = request.args.get("url")
+
     if not img_url:
         return "Missing image URL", 400
+
+    # ❌ data:image/... URLs ko skip karo
+    if img_url.startswith("data:"):
+        return "Data URLs not supported", 204
+
+    # ❌ sirf http/https allow
+    if not img_url.startswith(("http://", "https://")):
+        return "Invalid image URL", 400
 
     try:
         headers = {
@@ -48,9 +23,13 @@ def image_proxy():
             "Referer": img_url
         }
         r = requests.get(img_url, headers=headers, timeout=10)
+
         return Response(
             r.content,
-            content_type=r.headers.get("Content-Type", "image/jpeg")
+            content_type=r.headers.get(
+                "Content-Type", "image/jpeg"
+            )
         )
+
     except Exception as e:
         return str(e), 500
