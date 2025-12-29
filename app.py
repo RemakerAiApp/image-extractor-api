@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import logging
+import re  # For CSS parsing
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -12,10 +13,10 @@ def home():
     return jsonify({
         "message": "Image Extractor API is live and running! 🚀",
         "status": "healthy",
-        "version": "1.3",
+        "version": "1.4 - Now extracts CSS backgrounds too!",
         "endpoints": {
-            "POST /api/extract-images": "Extract image URLs from any website",
-            "GET /api/image-proxy?url=...": "Proxy images (bypass hotlink protection)"
+            "POST /api/extract-images": "Extract images from any website",
+            "GET /api/image-proxy?url=...": "Proxy images"
         },
         "frontend": "https://www.image-extractor.com/tools/website-image-extractor"
     }), 200
@@ -68,51 +69,63 @@ def extract_images():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive"
+            "Accept-Encoding": "gzip, deflate, br"
         }
 
-        r = requests.get(url, headers=headers, timeout=35, allow_redirects=True)
+        r = requests.get(url, headers=headers, timeout=40, allow_redirects=True)
         r.raise_for_status()
 
         soup = BeautifulSoup(r.text, "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
 
         images = set()
 
+        # 1. Extract from <img> tags (all attributes)
         for tag in soup.find_all("img"):
-            sources = []
-
-            # All possible src attributes
             for attr in ["src", "data-src", "data-lazy-src", "data-original", "data-image", "data-srcset"]:
                 if tag.get(attr):
-                    sources.append(tag[attr])
+                    images.add(tag[attr])
 
-            # srcset and data-srcset
-            for attr in ["srcset", "data-srcset"]:
-                if tag.get(attr):
-                    for part in tag[attr].split(","):
-                        candidate = part.strip().split(" ")[0]
-                        if candidate:
-                            sources.append(candidate)
+            if tag.get("srcset"):
+                for part in tag["srcset"].split(","):
+                    candidate = part.strip().split(" ")[0]
+                    if candidate:
+                        images.add(candidate)
 
-            for src in sources:
-                if not src or src.startswith("data:"):
-                    continue
+        # 2. Extract CSS background images (from <style> and inline styles)
+        css_patterns = re.compile(r'url\(["\']?(.*?)["\']?\)')
+        for style_tag in soup.find_all("style"):
+            matches = css_patterns.findall(style_tag.string or "")
+            for match in matches:
+                if match.startswith(("http://", "https://")):
+                    images.add(match)
 
-                # Resolve relative URLs
-                if src.startswith("//"):
-                    src = "https:" + src
-                elif src.startswith("/"):
-                    src = urljoin(url, src)
-                elif not src.startswith(("http://", "https://")):
-                    src = urljoin(url, src)
+        for tag in soup.find_all(style=True):
+            style = tag["style"]
+            matches = css_patterns.findall(style)
+            for match in matches:
+                if match.startswith(("http://", "https://")):
+                    images.add(match)
 
-                if src.startswith(("http://", "https://")):
-                    images.add(src)
+        # 3. Extract meta images (og:image, twitter:image)
+        for meta in soup.find_all("meta", attrs={"property": ["og:image", "twitter:image"]}):
+            if meta.get("content"):
+                images.add(meta["content"])
 
-        unique_images = sorted(list(images))
+        # Resolve all to absolute URLs
+        absolute_images = set()
+        for src in images:
+            if not src or src.startswith("data:"):
+                continue
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                src = urljoin(url, src)
+            elif not src.startswith(("http://", "https://")):
+                src = urljoin(url, src)
+            if src.startswith(("http://", "https://")):
+                absolute_images.add(src)
+
+        unique_images = sorted(list(absolute_images))
 
         response = jsonify({
             "success": True,
@@ -124,8 +137,8 @@ def extract_images():
         return response
 
     except Exception as e:
-        app.logger.error(f"Extract error: {str(e)}")
-        return jsonify({"success": False, "error": "Failed to extract images. Try a different website."}), 500
+        app.logger.error(f"Extract error for {url}: {str(e)}")
+        return jsonify({"success": False, "error": "Failed to extract. Try another site."}), 500
 
 
 if __name__ == "__main__":
