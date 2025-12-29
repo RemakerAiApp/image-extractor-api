@@ -33,3 +33,24 @@ def extract_images():
         "total_images": len(images),
         "images": images
     })
+from flask import Response
+import requests
+
+@app.route("/api/image-proxy")
+def image_proxy():
+    img_url = request.args.get("url")
+    if not img_url:
+        return "Missing image URL", 400
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": img_url
+        }
+        r = requests.get(img_url, headers=headers, timeout=10)
+        return Response(
+            r.content,
+            content_type=r.headers.get("Content-Type", "image/jpeg")
+        )
+    except Exception as e:
+        return str(e), 500
