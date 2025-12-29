@@ -1,4 +1,4 @@
-flask
-requests
-beautifulsoup4
-gunicorn
+Flask==2.3.2
+requests==2.31.0
+beautifulsoup4==4.12.2
+Pillow==10.0.0
